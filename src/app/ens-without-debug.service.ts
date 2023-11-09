@@ -2,7 +2,7 @@ import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import {
   defer,
-  filter,
+  filter, finalize,
   Observable,
   retry,
   share,
@@ -28,32 +28,17 @@ export class EnsService {
 
   ws = defer(() =>
     webSocket<{ eventType: string; payload: any }>(`ws://${API_HOST}/ws`),
-  ).pipe(
-    share({
-      resetOnRefCountZero: true, // can be made fancier eg () => timer(5000)
-    }),
-  );
+  ).pipe(share({ resetOnRefCountZero: true }));
 
   getEvents(eventType: string) {
     if (this.eventTypeStreamRegistry[eventType]) {
       return this.eventTypeStreamRegistry[eventType];
     } else {
       const eventTypeStream = this.setupEventInBackend(eventType).pipe(
-        retry({
-          count: 3,
-          delay: 1000,
-          resetOnSuccess: true,
-        }),
         switchMap(() => this.ws),
         filter((event) => event.eventType === eventType),
-        tap({
-          finalize: () => {
-            delete this.eventTypeStreamRegistry[eventType];
-          },
-        }),
-        share({
-          resetOnRefCountZero: true,
-        }),
+        finalize(() => { delete this.eventTypeStreamRegistry[eventType]; }),
+        share({ resetOnRefCountZero: true }),
       );
       this.eventTypeStreamRegistry[eventType] = eventTypeStream;
       return eventTypeStream;
@@ -61,6 +46,13 @@ export class EnsService {
   }
 
   setupEventInBackend(eventType: string) {
-    return this.http.post<void>(API_URL + '/event', { eventType });
+    // TODO resolve current json path and do that creaueOrUpdate in backend...
+    return this.http.post<void>(API_URL + '/event', { eventType }).pipe(
+      retry({ count: 3, delay: 1000, resetOnSuccess: true }),
+    )
+  }
+
+  jsonPathResolver() {
+    // ...
   }
 }

@@ -9,7 +9,7 @@ import {
   retry,
   share,
   switchMap,
-  tap,
+  tap, timer,
 } from 'rxjs';
 import { webSocket } from 'rxjs/webSocket';
 
@@ -26,14 +26,13 @@ const API_URL = `http://${API_HOST}/api`;
 export class EnsService {
   private http = inject(HttpClient);
 
-  // cache created streams
-  eventTypeStreamRegistry: { [eventType: string]: Observable<any> } = {};
+
 
   // self-closing WS (ref count)
   // single WS will be reused for all the event types
   // just a stream definition, nothing runs (defer)
   ws = defer(() =>
-    webSocket<{ eventType: string; payload: any }>(`ws://${API_HOST}/ws`),
+    webSocket<{ eventType: string; payload: any }>(`ws://${API_HOST}/ws`)
   ).pipe(
     tap({
       // next: (e) => console.log('[ws] next event', e),
@@ -43,9 +42,13 @@ export class EnsService {
       finalize: () => console.log('[ws] finalize'),
     }),
     share({
-      resetOnRefCountZero: true, // can be made fancier eg () => timer(5000)
+      // resetOnRefCountZero: true, // can be made fancier eg () => timer(5000)
+      resetOnRefCountZero: () => timer(1000)
     }),
   );
+
+  // cache created streams
+  eventTypeStreamRegistry: { [eventType: string]: Observable<any> } = {};
 
   // self-cleaning event type streams
   // 1. check if (and return) existing stream for event type from registry
@@ -74,16 +77,13 @@ export class EnsService {
         switchMap(() => this.ws),
         // only events for the eventType
         filter((event) => event.eventType === eventType),
-        tap({
-          // cleanup
-          finalize: () => {
-            console.log(
-              `[stream for ${eventType}] - remove stored stream from registry`,
-            );
-            delete this.eventTypeStreamRegistry[eventType];
-            // TODO do we need to make a API request to cleanup on backend too??
-            console.log(`[stream for ${eventType}] - debug, list stored streams`, this.eventTypeStreamRegistry);
-          },
+        finalize(() => {
+          console.log(
+            `[stream for ${eventType}] - remove stored stream from registry`,
+          );
+          delete this.eventTypeStreamRegistry[eventType];
+          // TODO do we need to make a API request to cleanup on backend too??
+          console.log(`[stream for ${eventType}] - debug, list stored streams`, this.eventTypeStreamRegistry);
         }),
         // cleanup on refcount
         share({
@@ -99,6 +99,9 @@ export class EnsService {
   }
 
   setupEventInBackend(eventType: string) {
+    // create or update JSON in backend to create subscription
+    // a bit of logic, what events we have already, bla, create JSON and send
+    // with current evetns
     return this.http.post<void>(API_URL + '/event', { eventType });
   }
 
